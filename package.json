@@ -1,0 +1,20 @@
+{
+  "name": "invoice-generator-backend",
+  "version": "1.0.0",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "mongoose": "^7.0.3",
+    "puppeteer": "^21.0.0",
+    "handlebars": "^4.7.7"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
