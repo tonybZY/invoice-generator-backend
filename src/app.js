@@ -1,82 +1,113 @@
 const express = require('express');
-const cors = require('cors');
+const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
-require('dotenv').config();
+const { generatePDF } = require('../services/pdfGenerator');
+const { calculateTotals } = require('../services/calculator');
 
-const app = express();
 const prisma = new PrismaClient();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// Routes
-app.get('/', (req, res) => {
-  res.json({ message: 'Invoice Generator API', version: '1.0.0' });
-});
-
-app.use('/api/invoices', require('./routes/invoices'));
-
-// n8n webhook endpoint
-app.post('/api/webhook/n8n', async (req, res) => {
+// Get all invoices
+router.get('/', async (req, res) => {
   try {
-    const { action, data } = req.body;
-    const { calculateTotals } = require('./services/calculator');
-    
-    switch(action) {
-      case 'create_invoice':
-      case 'create_quote':
-        const invoiceData = {
-          ...data,
-          type: action === 'create_invoice' ? 'invoice' : 'quote'
-        };
-        
-        // Calculate totals
-        const calculated = calculateTotals(invoiceData);
-        
-        // Generate invoice number
-        const count = await prisma.invoice.count();
-        const year = new Date().getFullYear();
-        const prefix = calculated.type === 'invoice' ? 'FA' : 'DE';
-        const invoiceNumber = `${prefix}${year}-${String(count + 1).padStart(4, '0')}`;
-        
-        // Create invoice with line items
-        const invoice = await prisma.invoice.create({
-          data: {
-            invoiceNumber,
-            type: calculated.type,
-            clientName: calculated.client.name,
-            clientEmail: calculated.client.email,
-            clientAddress: calculated.client.address,
-            clientPhone: calculated.client.phone,
-            clientSiret: calculated.client.siret,
-            subtotal: calculated.subtotal,
-            totalVat: calculated.totalVat,
-            total: calculated.total,
-            notes: calculated.notes,
-            dueDate: calculated.dueDate ? new Date(calculated.dueDate) : null,
-            lineItems: {
-              create: calculated.lineItems
-            }
-          },
-          include: {
-            lineItems: true
-          }
-        });
-        
-        res.json({ success: true, invoice });
-        break;
-      
-      default:
-        res.status(400).json({ error: 'Unknown action' });
-    }
+    const limit = parseInt(req.query.limit) || 100;
+    const invoices = await prisma.invoice.findMany({
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: { lineItems: true }
+    });
+    res.json(invoices);
   } catch (error) {
-    console.error('Webhook error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Create invoice
+router.post('/', async (req, res) => {
+  try {
+    const calculated = calculateTotals(req.body);
+    
+    // Generate invoice number
+    const count = await prisma.invoice.count();
+    const year = new Date().getFullYear();
+    const prefix = calculated.type === 'invoice' ? 'FA' : 'DE';
+    const invoiceNumber = `${prefix}${year}-${String(count + 1).padStart(4, '0')}`;
+    
+    const invoice = await prisma.invoice.create({
+      data: {
+        invoiceNumber,
+        type: calculated.type || 'invoice',
+        clientName: calculated.client.name,
+        clientEmail: calculated.client.email,
+        clientAddress: calculated.client.address,
+        clientPhone: calculated.client.phone,
+        clientSiret: calculated.client.siret,
+        subtotal: calculated.subtotal,
+        totalVat: calculated.totalVat,
+        total: calculated.total,
+        notes: calculated.notes,
+        dueDate: calculated.dueDate ? new Date(calculated.dueDate) : null,
+        lineItems: {
+          create: calculated.lineItems
+        }
+      },
+      include: {
+        lineItems: true
+      }
+    });
+    
+    res.status(201).json(invoice);
+  } catch (error) {
+    console.error('Create invoice error:', error);
+    res.status(400).json({ error: error.message });
+  }
 });
+
+// Get single invoice
+router.get('/:id', async (req, res) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+      include: { lineItems: true }
+    });
+    
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    res.json(invoice);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generate PDF
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: req.params.id },
+      include: { lineItems: true }
+    });
+    
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    
+    // Transform to match PDF generator format
+    const invoiceData = {
+      ...invoice,
+      client: {
+        name: invoice.clientName,
+        email: invoice.clientEmail,
+        address: invoice.clientAddress,
+        phone: invoice.clientPhone,
+        siret: invoice.clientSiret
+      }
+    };
+    
+    const pdf = await generatePDF(invoiceData);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${invoice.invoiceNumber}.pdf`);
+    res.send(pdf);
+  } catch (error) {
+    console.error('PDF generation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;
