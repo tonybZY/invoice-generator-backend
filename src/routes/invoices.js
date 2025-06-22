@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
+// const { generatePDF } = require('../services/pdfGenerator');
 const { generatePDF } = require('../services/pdfGenerator');
 const { calculateTotals } = require('../services/calculator');
 
@@ -71,14 +72,10 @@ router.get('/:id', async (req, res) => {
     });
     
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-    res.json(invoice);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Generate PDF
+    // Generate PDF
 router.get('/:id/pdf', async (req, res) => {
+  res.json({ message: 'PDF generation temporarily disabled' });
+  /*
   try {
     const invoice = await prisma.invoice.findUnique({
       where: { id: req.params.id },
@@ -97,6 +94,19 @@ router.get('/:id/pdf', async (req, res) => {
         phone: invoice.clientPhone,
         siret: invoice.clientSiret
       }
+    };
+    
+    const pdf = await generatePDF(invoiceData);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${invoice.invoiceNumber}.pdf`);
+    res.send(pdf);
+  } catch (error) {
+    console.error('PDF generation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+  */
+});
     };
     
     const pdf = await generatePDF(invoiceData);
