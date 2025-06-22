@@ -1,18 +1,14 @@
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
+const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
+const prisma = new PrismaClient();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Database connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/invoice-generator')
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes
 app.get('/', (req, res) => {
@@ -25,7 +21,7 @@ app.use('/api/invoices', require('./routes/invoices'));
 app.post('/api/webhook/n8n', async (req, res) => {
   try {
     const { action, data } = req.body;
-    const Invoice = require('./models/Invoice');
+    const { calculateTotals } = require('./services/calculator');
     
     switch(action) {
       case 'create_invoice':
@@ -34,8 +30,40 @@ app.post('/api/webhook/n8n', async (req, res) => {
           ...data,
           type: action === 'create_invoice' ? 'invoice' : 'quote'
         };
-        const invoice = new Invoice(invoiceData);
-        await invoice.save();
+        
+        // Calculate totals
+        const calculated = calculateTotals(invoiceData);
+        
+        // Generate invoice number
+        const count = await prisma.invoice.count();
+        const year = new Date().getFullYear();
+        const prefix = calculated.type === 'invoice' ? 'FA' : 'DE';
+        const invoiceNumber = `${prefix}${year}-${String(count + 1).padStart(4, '0')}`;
+        
+        // Create invoice with line items
+        const invoice = await prisma.invoice.create({
+          data: {
+            invoiceNumber,
+            type: calculated.type,
+            clientName: calculated.client.name,
+            clientEmail: calculated.client.email,
+            clientAddress: calculated.client.address,
+            clientPhone: calculated.client.phone,
+            clientSiret: calculated.client.siret,
+            subtotal: calculated.subtotal,
+            totalVat: calculated.totalVat,
+            total: calculated.total,
+            notes: calculated.notes,
+            dueDate: calculated.dueDate ? new Date(calculated.dueDate) : null,
+            lineItems: {
+              create: calculated.lineItems
+            }
+          },
+          include: {
+            lineItems: true
+          }
+        });
+        
         res.json({ success: true, invoice });
         break;
       
@@ -43,6 +71,7 @@ app.post('/api/webhook/n8n', async (req, res) => {
         res.status(400).json({ error: 'Unknown action' });
     }
   } catch (error) {
+    console.error('Webhook error:', error);
     res.status(500).json({ error: error.message });
   }
 });
